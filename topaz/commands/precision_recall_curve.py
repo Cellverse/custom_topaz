@@ -57,6 +57,7 @@ def main(args):
     mae = 0
     for name in image_list:
         target = targets.loc[targets.image_name == name]
+        name = name.split('/')[-1]
         predict = predicts.loc[predicts.image_name == name]
 
         target_coords = target[['x_coord', 'y_coord']].values

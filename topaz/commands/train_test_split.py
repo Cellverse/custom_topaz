@@ -8,6 +8,7 @@ import numpy as np
 import argparse
 
 import topaz.utils.files as file_utils
+import topaz.utils.star as star
 
 name = 'train_test_split'
 help = 'split micrographs with labeled particles into train/test sets'
@@ -78,7 +79,6 @@ def main(args):
     n = args.number
 
     ## load the labels
-
     path = args.file
     format_ = args.format_
     coords = file_utils.read_coordinates(path, format=format_)
@@ -89,7 +89,6 @@ def main(args):
     for name,group in coords.groupby('image_name'):
         image_names.append(name)
         groups.append(group)
-
     print('# splitting {} micrographs with {} labeled particles into {} train and {} test micrographs'.format(len(image_names), len(coords), len(image_names) - n, n), file=sys.stderr)
 
     ## randomly split the labels by micrograph
@@ -109,8 +108,8 @@ def main(args):
         image_names_train.append(image_names[j])
         groups_train.append(groups[j])
     
-    targets_train = pd.concat(groups_train, 0)
-    targets_test = pd.concat(groups_test, 0)
+    targets_train = pd.concat(groups_train)
+    targets_test = pd.concat(groups_test)
 
 
     ## if the image-dir is specified, make the image list files
@@ -141,10 +140,12 @@ def main(args):
     path = basename + '_train.txt'
     print('# writing:', path, file=sys.stderr)
     targets_train.to_csv(path, sep='\t', index=False)
+    star_train = pd.read_csv(path, sep='\t')
 
     path = basename + '_test.txt'
     print('# writing:', path, file=sys.stderr)
     targets_test.to_csv(path, sep='\t', index=False)
+    star_test = pd.read_csv(path, sep='\t')
 
     ## write the image list tables
     path = root + os.sep + 'image_list_train.txt'
@@ -155,6 +156,26 @@ def main(args):
     print('# writing:', path, file=sys.stderr)
     image_list_test.to_csv(path, sep='\t', index=False)
 
+    # rename_dict = {'image_name': 'GroupName', 'x_coord': star.X_COLUMN_NAME, 'y_coord': star.Y_COLUMN_NAME}
+    # star_train = star_train.rename(columns=rename_dict)
+    # for i in range(len(star_train)):
+    #     groupname = star_train['GroupName'][i]
+    #     if not groupname.endswith('.mrc'):
+    #         star_train.loc[i, 'GroupName'] = groupname +'.mrc'
+    # path = basename + '_train.star'
+    # with open(path, 'w') as f:
+    #     star.write(star_train, f)
+    #     print(f'Write topaz train .star file at {path}')
+
+    # star_test = star_test.rename(columns=rename_dict)
+    # for i in range(len(star_test)):
+    #     groupname = star_test['GroupName'][i]
+    #     if not groupname.endswith('.mrc'):
+    #         star_test.loc[i, 'GroupName'] = groupname +'.mrc'
+    # path = basename + '_test.star'
+    # with open(path, 'w') as f:
+    #     star.write(star_test, f) 
+    #     print(f'Write topaz test .star file at {path}')
 
 if __name__ == '__main__':
     parser = add_arguments()

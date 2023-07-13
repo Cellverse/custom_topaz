@@ -189,17 +189,17 @@ def cross_validation_split(k, fold, images, targets, random=np.random):
 
     test_images = [[]*len(images)]
     test_targets = [[]*len(targets)]
-    for row in validate_table.itertuples():
-        i = row.source
-        j = row.image_name
+    for _,row in validate_table.iterrows():
+        i = row['source']
+        j = row['image_name']
         test_images[i].append(images[i][j])
         test_targets[i].append(targets[i][j])
 
     train_images = [[]*len(images)]
     train_targets = [[]*len(targets)]
-    for row in train_table.itertuples():
-        i = row.source
-        j = row.image_name
+    for _,row in train_table.iterrows():
+        i = row['source']
+        j = row['image_name']
         train_images[i].append(images[i][j])
         train_targets[i].append(targets[i][j])
 
@@ -207,13 +207,14 @@ def cross_validation_split(k, fold, images, targets, random=np.random):
 
 def load_data(train_images, train_targets, test_images, test_targets, radius
              , k_fold=0, fold=0, cross_validation_seed=42, format_='auto', image_ext=''):
+    ### Load train/test data
 
     # if train_images is a directory path, map to all images in the directory
     if os.path.isdir(train_images):
         paths = glob.glob(train_images + os.sep + '*' + image_ext)
         valid_paths = []
         image_names = []
-        for path in paths:
+        for path in paths: # path: .../*.mrc  .../*.tiff  .../*.png
             name = os.path.basename(path)
             name,ext = os.path.splitext(name)
             if ext in ['.mrc', '.tiff', '.png']:
@@ -231,7 +232,7 @@ def load_data(train_images, train_targets, test_images, test_targets, radius
         train_targets['source'] = 0
     # load the images and create target masks from the particle coordinates
     train_images = load_images_from_list(train_images.image_name, train_images.path
-                                        , sources=train_images.source)
+                                        , sources=train_images.source) #! No Normalized dict
 
     # discard coordinates for micrographs not in the set of images
     # and warn the user if any are discarded
@@ -276,6 +277,8 @@ def load_data(train_images, train_targets, test_images, test_targets, radius
 
 
     train_images, train_targets = match_images_targets(train_images, train_targets, radius)
+    
+    
 
     
     if test_images is not None:
@@ -335,6 +338,7 @@ def report_data_stats(train_images, train_targets, test_images, test_targets):
     report('source\tsplit\tp_observed\tnum_positive_regions\ttotal_regions')
     num_positive_regions = 0
     total_regions = 0
+    
     for i in range(len(train_images)):
         p = sum(train_targets[i][j].sum() for j in range(len(train_targets[i])))
         p = int(p)
@@ -351,7 +355,32 @@ def report_data_stats(train_images, train_targets, test_images, test_targets):
             p_observed = p/total
             p_observed = '{:.3g}'.format(p_observed)
             report(str(i)+'\t'+'test'+'\t'+p_observed+'\t'+str(p)+'\t'+str(total))
+            
     return num_positive_regions, total_regions
+
+def calculate_micrograph_mask_positive_regions_distribution(train_targets):
+    num_positive_regions = []
+    
+    train_targets = train_targets[0]
+    for mask in train_targets:
+        num_positive_regions.append(mask.sum()/mask.size)
+    
+    import matplotlib.pyplot as plt
+    x = np.arange(1, len(num_positive_regions)+1, 1, dtype=int)
+    plt.plot(x, num_positive_regions)
+    plt.xlim(1, len(num_positive_regions))
+    plt.xticks(x, rotation=0) 
+    plt.xlabel('micrograph id')
+    plt.ylabel('positive mask ratio')
+    plt.title('positive mask ratio distribution')
+    plt.tight_layout()
+    plt.savefig('positive.png')
+    exit()
+    
+    
+    
+        
+
 
 def make_model(args):
     from topaz.model.factory import get_feature_extractor
@@ -490,21 +519,34 @@ def make_data_iterators(train_images, train_targets, test_images, test_targets
 
     ## create augmented training dataset
     train_dataset = make_traindataset(train_images, train_targets, crop)
+    print('# Create train_dataset complete!')
     test_dataset = None
     if test_targets is not None:
         test_dataset = make_testdataset(test_images, test_targets)
+        print('# Create test_dataset complete!')
+
 
     ## create minibatch iterators
-    labels = train_dataset.data.labels
+    labels = train_dataset.data.labels # [1, Micrograph_num, N, N] 01 mask
+
     sampler = StratifiedCoordinateSampler(labels, size=epoch_size*minibatch_size
                                          , balance=balance, split=split)
+    
+    # visual_weights(sampler)
+
+
+    print('# Create sampler complete!')
     train_iterator = DataLoader(train_dataset, batch_size=minibatch_size, sampler=sampler
                                , num_workers=num_workers)
+    
+    # visual_sample(train_iterator)
+    
+    print('# Create train_iterator complete!')
 
     test_iterator = None
     if test_dataset is not None:
         test_iterator = DataLoader(test_dataset, batch_size=testing_batch_size, num_workers=0)
-
+        print('# Create test_iterator complete!')
     return train_iterator, test_iterator
 
 
@@ -553,10 +595,14 @@ def evaluate_model(classifier, criteria, data_iterator, use_cuda=False):
 
 def fit_epoch(step_method, data_iterator, epoch=1, it=1, use_cuda=False, output=sys.stdout):
     for X,Y in data_iterator:
+        
         Y = Y.view(-1)
         if use_cuda:
             X = X.cuda()
             Y = Y.cuda()
+        # check whether X, Y are writable
+        # print(X.is_writable(), Y.is_writable())
+        # exit()
         metrics = step_method.step(X, Y)
         line = '\t'.join([str(epoch), str(it), 'train'] + [str(metric) for metric in metrics] + ['-'])
         print(line, file=output)
@@ -565,6 +611,83 @@ def fit_epoch(step_method, data_iterator, epoch=1, it=1, use_cuda=False, output=
     return it
 
 
+def visual_weights(sampler):
+    p_weights_list = []
+    n_weights_list = []
+    iteration=256
+    for i in range(iteration):
+        weights = sampler.get_current_weights()
+        p_weights_list.append(weights[0])
+        n_weights_list.append(weights[1])
+        _ = next(sampler)
+        
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10, 5))
+    plt.plot(p_weights_list, label='positive')
+    plt.plot(n_weights_list, label='negative')
+    plt.xlabel('iteration')
+    plt.ylabel('weights')
+    plt.legend()
+    plt.savefig('weights.png')
+
+    batch_p_num = []
+    iteration=1000
+    batchsize=256
+    for i in range(iteration):
+        p_num = 0
+        for j in range(batchsize):
+            p_num += int(next(sampler) == 0)
+        batch_p_num.append(p_num/batchsize)
+    
+    plt.figure(figsize=(10, 5))
+    plt.plot(batch_p_num)
+    plt.xlabel('iteration')
+    plt.ylabel('positive label ratio')
+    plt.savefig('p_ratio.png')
+
+    exit()
+    
+def visual_sample(data_loader):
+    from tqdm import tqdm
+    from torchvision.utils import save_image
+    p_samples = []
+    n_samples = []
+    for X, Y in tqdm(data_loader):
+        # print(X.shape)
+        # print(Y.shape)
+        N = X.shape[0]
+        for i in range(N):
+            label = Y[i]
+            sample = X[i]
+            if label == 0:
+                if len(n_samples) < 256:
+                    n_samples.append(sample)
+            else:
+                if len(p_samples) < 256:
+                    p_samples.append(sample)
+        if len(n_samples) == 256 and len(p_samples) == 256:
+            break
+        
+    print(len(n_samples))
+    print(len(p_samples))
+    
+    n_samples = n_samples[:256]
+    p_samples = p_samples[:256]
+    
+    n_samples = np.stack(n_samples, axis=0)[:, None, :, :]
+    p_samples = np.stack(p_samples, axis=0)[:, None, :, :]
+    
+    print(n_samples.shape, p_samples.shape)
+    
+    n_samples = torch.from_numpy(n_samples)
+    p_samples = torch.from_numpy(p_samples)
+    
+    save_image(n_samples, 'n_samples_256.png', nrow=16, normalize=True)
+    save_image(p_samples, 'p_samples_256.png', nrow=16, normalize=True)
+    
+    exit()
+    
+from tqdm import tqdm
 def fit_epochs(classifier, criteria, step_method, train_iterator, test_iterator, num_epochs
               , save_prefix=None, use_cuda=False, output=sys.stdout):
     ## fit the model, report train/test stats, save model if required
@@ -573,9 +696,11 @@ def fit_epochs(classifier, criteria, step_method, train_iterator, test_iterator,
     print(line, file=output)
 
     it = 1
-    for epoch in range(1,num_epochs+1):
+    for epoch in tqdm(range(1,num_epochs+1), desc='Training...'):
         ## update the model
         classifier.train()
+        
+        
         it = fit_epoch(step_method, train_iterator, epoch=epoch, it=it
                       , use_cuda=use_cuda, output=output)
 
@@ -643,6 +768,9 @@ def main(args):
                       cross_validation_seed=args.cross_validation_seed,
                       image_ext=args.image_ext
                      )
+            
+    # calculate_micrograph_mask_positive_regions_distribution(train_targets)
+    
     num_positive_regions, total_regions = report_data_stats(train_images, train_targets
                                                            , test_images, test_targets)
 
@@ -683,7 +811,6 @@ def main(args):
                                                         , slack=args.slack
                                                         , autoencoder=args.autoencoder
                                                         )
-
     ## training parameters
     train_iterator,test_iterator = make_data_iterators(train_images, train_targets,
                                                        test_images, test_targets,
@@ -691,6 +818,7 @@ def main(args):
     
     ## fit the model, report train/test stats, save model if required
     output = sys.stdout if args.output is None else open(args.output, 'w')
+    print('# Find appropiate output!')
     save_prefix = args.save_prefix
     #if not os.path.exists(os.path.dirname(save_prefix)):
     #    os.makedirs(os.path.dirname(save_prefix))

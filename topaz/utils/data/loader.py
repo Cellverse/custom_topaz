@@ -227,8 +227,8 @@ class SegmentedImageDataset:
         label = self.labels[j][i]
 
         if self.to_tensor:
-            im = torch.from_numpy(np.array(im, copy=False))
-            label = torch.from_numpy(np.array(label, copy=False)).float()
+            im = torch.from_numpy(np.array(im, copy=True))
+            label = torch.from_numpy(np.array(label, copy=True)).float()
 
         return im, label
 

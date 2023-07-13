@@ -5,6 +5,7 @@ import pandas as pd
 X_COLUMN_NAME = 'CoordinateX'
 Y_COLUMN_NAME = 'CoordinateY'
 SCORE_COLUMN_NAME = 'AutopickFigureOfMerit'
+MICROGRAPH_NAME = 'MicrographName'
 OLD_SCORE_COLUMN_NAME = 'ParticleScore'
 
 VOLTAGE = 'Voltage'
@@ -41,7 +42,8 @@ def parse_star_body(lines):
         if line != '':
             tokens = line.split()
             content.append(tokens)
-
+            if len(tokens) != len(header):
+                raise Exception('Line ' + str(i) + ' has ' + str(len(tokens)) + ' columns, expected ' + str(len(header)))
     table = pd.DataFrame(content, columns=header)
 
     # check for old naming convention, 'ParticleScore'
